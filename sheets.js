@@ -58,16 +58,18 @@ async function cargarDatosDesdeSheets(category) {
   });
   for (let i = 0; i < data.length; i++) {
     const fila = data[i];
+  
     if (fila["Tipo"].toLowerCase() === "variable") {
+      // Extraemos atributos definidos en la fila padre
       const atributos = fila["Atributos"]
         ? fila["Atributos"].split(",").map(attr => attr.trim())
         : [];
   
+      // Creamos el producto padre
       const producto = {
         name: fila["Nombre"],
         type: "variable",
         sku: fila["SKU"],
-        regular_price: fila["Precio normal"],
         status: fila["Publicado"] === "1" ? 'publish' : 'draft',
         catalog_visibility: fila["Visibilidad en el catálogo"] || "visible",
         description: fila["Descripción"],
@@ -78,42 +80,48 @@ async function cargarDatosDesdeSheets(category) {
           : [],
         attributes: atributos.map(attr => ({
           name: attr,
-          options: fila[attr] ? fila[attr].split(",").map(opt => opt.trim()) : []
+          options: [], // se llenará después con todas las opciones encontradas
+          variation: true,
+          visible: true
         })),
-        stock_quantity: fila["Inventario"] || 10000,
+        manage_stock: true,
+        stock_quantity: 10000,
       };
+  
+      // Recolectamos variaciones
+      const variaciones = [];
+  
+      let j = i + 1;
+      while (j < data.length && data[j]["Tipo"].toLowerCase() === "variation") {
+        
+        variaciones.push(data[j]);
+        j++;
+      }
+  
+      // Llenamos las opciones posibles para cada atributo
+      for (const attr of producto.attributes) {
+        const opciones = variaciones.map(v => v[attr.name]?.trim()).filter(Boolean);
+        attr.options = [...new Set(opciones)];
+      }
   
       const productId = await crearProductoVariable(producto);
   
-      // Por cada combinación de atributos → crear variaciones
-      for (const attr of producto.attributes) {
-        for (const option of attr.options) {
-          await agregarVariacion(productId, attr.name, option, fila["Precio normal"] || "0");
-        }
-      }
-    } else {
-      // Producto simple
-      await axios.post(siteUrl, {
-        name: fila["Nombre"],
-        type: "simple",
-        regular_price: fila["Precio normal"],
-        sku: fila["SKU"],
-        status: fila["Publicado"] === "1" ? 'publish' : 'draft',
-        catalog_visibility: fila["Visibilidad en el catálogo"] || "visible",
-        description: fila["Descripción"],
-        short_description: fila["Descripción corta"],
-        categories: [{ id: categoryMap[category] }],
-        images: fila["Imágenes"]
-          ? fila["Imágenes"].split(",").map(url => ({ src: encodeURIComponent(url.trim()) }))
-          : [],
-        manage_stock: true,
-        stock_quantity: fila["Inventario"] || 10,
-      }, {
-        auth: { username: consumerKey, password: consumerSecret }
-      });
+      // Crear cada variación con precio individual
+      for (const variante of variaciones) {
+        const precio = variante["Precio"] || variante["Precio normal"] || "0";
+        const sku = variante["SKU"];
   
-      console.log(`✅ Producto simple creado: ${fila["Nombre"]}`);
-    }
+        const atributosVariacion = atributos.map(attr => ({
+          name: attr,
+          option: variante[attr]?.trim()
+        }));
+  
+        await agregarVariacion(productId, atributosVariacion, precio, sku);
+      }
+  
+      // Avanzamos el índice hasta el último hijo
+      i = j - 1;      
+    } 
   }
   // await guardarDatosEnMySQL(data, servidorNombre);
 }
@@ -157,17 +165,13 @@ async function crearProductoVariable(producto) {
 }
 
 
-async function agregarVariacion(productId, attrName, optionValue, precio) {
+async function agregarVariacion(productId, attributes, precio, sku) {
   const response = await axios.post(
     `https://vorx.es/paraiso/wp-json/wc/v3/products/${productId}/variations`,
     {
       regular_price: precio,
-      attributes: [
-        {
-          name: attrName,
-          option: optionValue
-        }
-      ]
+      sku: sku || undefined,
+      attributes
     },
     {
       auth: {
@@ -176,7 +180,8 @@ async function agregarVariacion(productId, attrName, optionValue, precio) {
       }
     }
   );
-  console.log(`✔️ Variación añadida: ${attrName} = ${optionValue}`, response.data.id);
+  console.log(`✔️ Variación creada: ${sku} con precio ${precio}`, response.data.id);
+
 }
 
 // for (const category of categories) {
@@ -210,7 +215,7 @@ async function getProduct(){
   }
 }
 
-console.log(await cargarDatosDesdeSheets(categoryMap["F1"]));
+console.log(await cargarDatosDesdeSheets("F1"));
 // console.log(await getProduct())
 
 
