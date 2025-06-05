@@ -1,6 +1,8 @@
 import axios from 'axios';
 
 const siteUrl = 'https://vorx.es/paraiso/wp-json/wc/v3/products';
+
+
 const consumerKey = 'ck_1b796be20210995e2ef2f2aaf93c3e5e7a95dd8e';
 const consumerSecret = 'cs_722f766c8eb9db857e250854cc0dd84de1ad9410';
 
@@ -29,10 +31,10 @@ function parseCsvRow(row) {
   return result;
 }
 
-const categories = [
-  "ACBFIBA",
-  "F1"
-]
+const categoryMap = {
+  "ACBFIBA": 42,
+  "F1": 43
+};
 
 async function cargarDatosDesdeSheets(category) {
   const sheetId = '1N0RRAfur6Ue3MoiUgly9BmXS6lEoBR_jq7MU7qJxDoY';
@@ -44,7 +46,7 @@ async function cargarDatosDesdeSheets(category) {
   }
 
   const csvText = await response.text();
-  const rows = csvText.trim().split('\n');
+  const rows = csvText.trim().split('\n').slice(0, 9);
   const headers = parseCsvRow(rows[0]);
 
   const data = rows.slice(1).map(row => {
@@ -54,86 +56,128 @@ async function cargarDatosDesdeSheets(category) {
       return obj;
     }, {});
   });
-  for(let i=0;i<data.length;i++){
-    const producto = {
-      name: data[i]["Nombre"],
-      type: data[i]["Tipo"],
-      price: data[i]["Precio Normal"],
-      regular_price: data[i]["Precio normal"],
-      sku: data[i]["SKU"],
-      status: data[i]["Publicado"] === 1 ? 'publish' : 'draft',
-      catalog_visibility: data[i]["Visibilidad en el catálogo"] === "visible" ? "true" : "false",
-      description: data[i]["Descripción"],
-      short_description: data[i]["Descripción corta"],
-      categories: [category],
-      images: [
-        data[i]["Imágenes"].split(",")
-      ],
-      attributes: [
-        data[i]["Atributos"].split(",").map(attr => ({
-          name: attr.trim(),
-          options: data[i][attr].split(",").map(option => option.trim())
-        }))
-      ],
-      purchasable: true,
-      tax_status: 'taxable',
-      tax_class: 'parent',
-      shipping_required: true,
-    };
-
-    await crearProductoVariable(producto);
-    for(let j=0;j < producto.attributes.length; j++){
-      console.log(producto.attributes[j])
-      for(let k=1;k < producto.attributes[j].length; k++){
-        await crearProductoVariable(data[i + k]);
-        i++
+  for (let i = 0; i < data.length; i++) {
+    const fila = data[i];
+    if (fila["Tipo"].toLowerCase() === "variable") {
+      const atributos = fila["Atributos"]
+        ? fila["Atributos"].split(",").map(attr => attr.trim())
+        : [];
+  
+      const producto = {
+        name: fila["Nombre"],
+        type: "variable",
+        sku: fila["SKU"],
+        regular_price: fila["Precio normal"],
+        status: fila["Publicado"] === "1" ? 'publish' : 'draft',
+        catalog_visibility: fila["Visibilidad en el catálogo"] || "visible",
+        description: fila["Descripción"],
+        short_description: fila["Descripción corta"],
+        categories: [{ id: categoryMap[category] }],
+        images: fila["Imágenes"]
+          ? fila["Imágenes"].split(",").map(url => ({ src: url.trim() }))
+          : [],
+        attributes: atributos.map(attr => ({
+          name: attr,
+          options: fila[attr] ? fila[attr].split(",").map(opt => opt.trim()) : []
+        })),
+        stock_quantity: fila["Inventario"] || 10000,
+      };
+  
+      const productId = await crearProductoVariable(producto);
+  
+      // Por cada combinación de atributos → crear variaciones
+      for (const attr of producto.attributes) {
+        for (const option of attr.options) {
+          await agregarVariacion(productId, attr.name, option, fila["Precio normal"] || "0");
+        }
       }
+    } else {
+      // Producto simple
+      await axios.post(siteUrl, {
+        name: fila["Nombre"],
+        type: "simple",
+        regular_price: fila["Precio normal"],
+        sku: fila["SKU"],
+        status: fila["Publicado"] === "1" ? 'publish' : 'draft',
+        catalog_visibility: fila["Visibilidad en el catálogo"] || "visible",
+        description: fila["Descripción"],
+        short_description: fila["Descripción corta"],
+        categories: [{ id: categoryMap[category] }],
+        images: fila["Imágenes"]
+          ? fila["Imágenes"].split(",").map(url => ({ src: encodeURIComponent(url.trim()) }))
+          : [],
+        manage_stock: true,
+        stock_quantity: fila["Inventario"] || 10,
+      }, {
+        auth: { username: consumerKey, password: consumerSecret }
+      });
+  
+      console.log(`✅ Producto simple creado: ${fila["Nombre"]}`);
     }
   }
   // await guardarDatosEnMySQL(data, servidorNombre);
 }
 
 async function crearProductoVariable(producto) {
-  try {
-    const res = await axios.post(siteUrl, producto, {
+  const response = await axios.post(
+    siteUrl,
+    {
+      name: producto.name,
+      type: "variable",
+      sku: producto.sku,
+      status: producto.status,
+      description: producto.description,
+      short_description: producto.short_description,
+      catalog_visibility: producto.catalog_visibility,
+      categories: producto.categories,
+      images: producto.images,
+      attributes: producto.attributes.map(attr => ({
+        name: attr.name,
+        options: attr.options,
+        variation: true,
+        visible: true
+      })),
+      manage_stock: true,
+      stock_quantity: producto.stock_quantity,
+      purchasable: true,
+      tax_status: 'taxable',
+      tax_class: 'parent',
+      shipping_required: true,
+    },
+    {
       auth: {
         username: consumerKey,
         password: consumerSecret
       }
-    });
-
-    const productId = res.data.id;
-    console.log('✅ Producto base creado:', productId);
-
-    // Crear variaciones
-    const variaciones = [];
-    for (let talla of product.attributes[0].options) {
-      for (let serigrafia of producto.attributes[1].options) {
-        variaciones.push({
-          regular_price: '29.99',
-          manage_stock: true,
-          stock_quantity: 5,
-          attributes: [
-            { name: 'Talla', option: talla },          ]
-        });
-      }
     }
+  );
+  console.log("✅ Producto variable creado:", response.data.id);
+  return response.data.id;
 
-    for (const variacion of variaciones) {
-      const url = `${siteUrl}/${productId}/variations`;
-      const vres = await axios.post(url, variacion, {
-        auth: {
-          username: consumerKey,
-          password: consumerSecret
-        }
-      });
-      console.log('✔️ Variación creada:', vres.data.id);
-    }
-  } catch (err) {
-    console.error('❌ Error:', err.response?.data || err.message);
-  }
 }
 
+
+async function agregarVariacion(productId, attrName, optionValue, precio) {
+  const response = await axios.post(
+    `https://vorx.es/paraiso/wp-json/wc/v3/products/${productId}/variations`,
+    {
+      regular_price: precio,
+      attributes: [
+        {
+          name: attrName,
+          option: optionValue
+        }
+      ]
+    },
+    {
+      auth: {
+        username: consumerKey,
+        password: consumerSecret
+      }
+    }
+  );
+  console.log(`✔️ Variación añadida: ${attrName} = ${optionValue}`, response.data.id);
+}
 
 // for (const category of categories) {
 //   cargarDatosDesdeSheets(category)
@@ -166,7 +210,7 @@ async function getProduct(){
   }
 }
 
-console.log(await cargarDatosDesdeSheets(categories))
+console.log(await cargarDatosDesdeSheets(categoryMap["F1"]));
 // console.log(await getProduct())
 
 
