@@ -39,7 +39,6 @@ const categoryMap = {
 async function cargarDatosDesdeSheets(category) {
   const sheetId = '1N0RRAfur6Ue3MoiUgly9BmXS6lEoBR_jq7MU7qJxDoY';
   const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${category}`;
-  const gallerieRoute = "vorx.es/paraiso/wp-content/uploads/2025/06/";
 
   const response = await fetch(csvUrl);
   if (!response.ok) {
@@ -47,10 +46,10 @@ async function cargarDatosDesdeSheets(category) {
   }
 
   const csvText = await response.text();
-  const rows = csvText.trim().split('\n').slice(0, 61);
+  const rows = csvText.trim().split('\n').slice(0, 805);
   const headers = parseCsvRow(rows[0]);
 
-  const data = rows.slice(1).map(row => {
+  const data = rows.slice(374, 805).map(row => {
     const cells = parseCsvRow(row);
     return cells.reduce((obj, cell, i) => {
       obj[headers[i]] = cell;
@@ -59,10 +58,12 @@ async function cargarDatosDesdeSheets(category) {
   });
   for (let i = 0; i < data.length; i++) {
     const fila = data[i];
-    if (fila["Tipo"] === "" || fila["Tipo"] === null ||) {
+    if (!fila["Tipo"] || (
+      fila["Tipo"].toLowerCase() !== "variable" &&
+      fila["Tipo"].toLowerCase() !== "variation"
+    )) {
       continue;
     }
-  
     if (fila["Tipo"].toLowerCase() === "variable") {
       // Extraemos atributos definidos en la fila padre
       const atributos = fila["Atributos"]
@@ -90,13 +91,18 @@ async function cargarDatosDesdeSheets(category) {
 
       const match = fila["Nombre"].match(edicionRegex);
       const equipo = fila["Nombre"]
-      .split(edicionRegex)[0]
-      .trim()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "");
+      .split(edicionRegex)[0]            // Corta hasta antes de la edición
+      .trim()                             // Elimina espacios al principio y final
+      .normalize("NFD")                   // Quita acentos
+      .replace(/[\u0300-\u036f]/g, "")    // Quita tildes
+      .replace(/\s+/g, "-");    
 
-      const edicion = match ? match[0].trim() : "";
-
+      let edicion = match ? match[0].trim() : "";
+      if (match) {
+        const start = fila["Nombre"].indexOf(match[0]);
+        const postMatch = fila["Nombre"].substring(start);
+        edicion = postMatch.replace(/\d{2}\/\d{2}$/, "").trim(); // quita el año si lo hay
+      }
       // Creamos el producto padre
       const producto = {
         name: fila["Nombre"],
