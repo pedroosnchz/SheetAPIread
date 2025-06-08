@@ -1,5 +1,4 @@
-import axios from 'axios';
-
+const axios = require('axios');
 const siteUrl = 'https://vorx.es/paraiso/wp-json/wc/v3/products';
 
 
@@ -33,12 +32,14 @@ function parseCsvRow(row) {
 
 const categoryMap = {
   "ACBFIBA": 42,
-  "F1": 43
+  "F1": 43,
+  "Futbol":39,
 };
 
 async function cargarDatosDesdeSheets(category) {
   const sheetId = '1N0RRAfur6Ue3MoiUgly9BmXS6lEoBR_jq7MU7qJxDoY';
   const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${category}`;
+  const gallerieRoute = "vorx.es/paraiso/wp-content/uploads/2025/06/";
 
   const response = await fetch(csvUrl);
   if (!response.ok) {
@@ -46,7 +47,7 @@ async function cargarDatosDesdeSheets(category) {
   }
 
   const csvText = await response.text();
-  const rows = csvText.trim().split('\n').slice(0, 9);
+  const rows = csvText.trim().split('\n').slice(0, 61);
   const headers = parseCsvRow(rows[0]);
 
   const data = rows.slice(1).map(row => {
@@ -64,7 +65,29 @@ async function cargarDatosDesdeSheets(category) {
       const atributos = fila["Atributos"]
         ? fila["Atributos"].split(",").map(attr => attr.trim())
         : [];
-  
+      const ediciones = [
+        "Local",
+        "Visitante",
+        "Portero",
+        "Alternativa",
+        "Tercera",
+        "Especial",
+        "Prepartido",
+        "Local manga larga",
+        "Festival",
+        "Copa",
+        "Edición Especial",
+        "50 aniversario",
+        "100 aniversario"
+      ];
+      
+      const liga = fila["Categorías"].split("-")[1];
+      const edicionRegex = new RegExp(`\\b(${ediciones.join("|")})\\b`, "i");
+
+      const match = fila["Nombre"].match(edicionRegex);
+      const equipo = fila["Nombre"].split(edicionRegex)[0].trim();
+      const edicion = match ? match[0].trim() : "";
+
       // Creamos el producto padre
       const producto = {
         name: fila["Nombre"],
@@ -75,9 +98,7 @@ async function cargarDatosDesdeSheets(category) {
         description: fila["Descripción"],
         short_description: fila["Descripción corta"],
         categories: [{ id: categoryMap[category] }],
-        images: fila["Imágenes"]
-          ? fila["Imágenes"].split(",").map(url => ({ src: url.trim() }))
-          : [],
+        images: await generarImagenesDesdeMedia(liga, equipo, edicion),
         attributes: atributos.map(attr => ({
           name: attr,
           options: [], // se llenará después con todas las opciones encontradas
@@ -125,6 +146,27 @@ async function cargarDatosDesdeSheets(category) {
   }
   // await guardarDatosEnMySQL(data, servidorNombre);
 }
+
+async function generarImagenesDesdeMedia(liga, equipo, edicion) {
+  const baseUrl = "https://vorx.es/paraiso/wp-content/uploads/2025/06";
+  const maxIntentos = 10; // límite de seguridad
+  const imagenes = [];
+
+  for (let i = 1; i <= maxIntentos; i++) {
+    const url = `${baseUrl}/${liga}-${equipo}-${edicion}-${i}.webp`;
+
+    try {
+      const response = await fetch(url, { method: 'HEAD' }); // no descarga, solo comprueba si existe
+      if (!response.ok) break; // si no existe, detenemos
+      imagenes.push({ src: url });
+    } catch (error) {
+      break; // error de red u otro → paramos
+    }
+  }
+
+  return imagenes;
+}
+
 
 async function crearProductoVariable(producto) {
   const response = await axios.post(
@@ -215,8 +257,10 @@ async function getProduct(){
   }
 }
 
-console.log(await cargarDatosDesdeSheets("F1"));
-// console.log(await getProduct())
+(async () => {
+  console.log(await cargarDatosDesdeSheets("Futbol"));
+  // console.log(await getProduct());
+})();
 
 
 
