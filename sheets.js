@@ -36,6 +36,10 @@ const categoryMap = {
   "Futbol":39,
 };
 
+function quitarAcentos(str) {
+  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
 async function cargarDatosDesdeSheets(category) {
   const sheetId = '1N0RRAfur6Ue3MoiUgly9BmXS6lEoBR_jq7MU7qJxDoY';
   const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${category}`;
@@ -90,18 +94,22 @@ async function cargarDatosDesdeSheets(category) {
       const edicionRegex = new RegExp(`\\b(${ediciones.join("|")})\\b`, "i");
 
       const match = fila["Nombre"].match(edicionRegex);
-      const equipo = fila["Nombre"]
-      .split(edicionRegex)[0]            // Corta hasta antes de la edición
-      .trim()                             // Elimina espacios al principio y final
-      .normalize("NFD")                   // Quita acentos
-      .replace(/[\u0300-\u036f]/g, "")    // Quita tildes
-      .replace(/\s+/g, "-");    
 
-      let edicion = match ? match[0].trim() : "";
+      let equipo = "";
+      let edicion = "";
+      
       if (match) {
         const start = fila["Nombre"].indexOf(match[0]);
+        equipo = quitarAcentos(fila["Nombre"].substring(0, start).trim())
+          .replace(/\s+/g, "-");
+      
         const postMatch = fila["Nombre"].substring(start);
-        edicion = postMatch.replace(/\d{2}\/\d{2}$/, "").trim(); // quita el año si lo hay
+        edicion = quitarAcentos(
+          postMatch.replace(/\d{2}\/\d{2}/, "").trim()
+        )
+          .replace(/[^\w\s-]/g, "")     // eliminar símbolos
+          .replace(/\s+/g, "-")         // espacios a guiones
+          .toLowerCase();
       }
       // Creamos el producto padre
       const producto = {
