@@ -59,6 +59,9 @@ async function cargarDatosDesdeSheets(category) {
   });
   for (let i = 0; i < data.length; i++) {
     const fila = data[i];
+    if (fila["Tipo"] === "" || fila["Tipo"] === null ||) {
+      continue;
+    }
   
     if (fila["Tipo"].toLowerCase() === "variable") {
       // Extraemos atributos definidos en la fila padre
@@ -76,16 +79,22 @@ async function cargarDatosDesdeSheets(category) {
         "Local manga larga",
         "Festival",
         "Copa",
+        "Coldplay",
         "Edición Especial",
         "50 aniversario",
         "100 aniversario"
       ];
-      
-      const liga = fila["Categorías"].split("-")[1];
+      console.log(fila["Categorías"])
+      const liga = fila["Categorías"].split(" – ")[1];
       const edicionRegex = new RegExp(`\\b(${ediciones.join("|")})\\b`, "i");
 
       const match = fila["Nombre"].match(edicionRegex);
-      const equipo = fila["Nombre"].split(edicionRegex)[0].trim();
+      const equipo = fila["Nombre"]
+      .split(edicionRegex)[0]
+      .trim()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+
       const edicion = match ? match[0].trim() : "";
 
       // Creamos el producto padre
@@ -152,9 +161,10 @@ async function generarImagenesDesdeMedia(liga, equipo, edicion) {
   const maxIntentos = 10; // límite de seguridad
   const imagenes = [];
 
-  for (let i = 1; i <= maxIntentos; i++) {
-    const url = `${baseUrl}/${liga}-${equipo}-${edicion}-${i}.webp`;
+  for (let i = -1; i <= maxIntentos; i++) {
 
+    const url = `${baseUrl}/${liga}-${equipo}-${edicion}-${i == -1 ? "portada" : i}.webp`;
+    console.log("Comprobando imagen:", url);
     try {
       const response = await fetch(url, { method: 'HEAD' }); // no descarga, solo comprueba si existe
       if (!response.ok) break; // si no existe, detenemos
