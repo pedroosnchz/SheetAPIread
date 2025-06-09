@@ -35,9 +35,123 @@ const categoryMap = {
   "F1": 43,
   "Futbol":39,
 };
+async function obtenerSlugTermino(attributeId, nombre) {
+  const normalizar = str =>
+    str
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // quitar acentos
+      .toLowerCase()
+      .trim()
+
+  try {
+    const response = await axios.get(
+      `https://vorx.es/paraiso/wp-json/wc/v3/products/attributes/${attributeId}/terms`,
+      {
+        auth: { username: consumerKey, password: consumerSecret },
+        params: { per_page: 100 }
+      }
+    );
+
+
+    for (const t of response.data) {
+      console.log(`"${t.name}" + ${nombre} con slug "${t.slug}"`);
+      if (t.name.toLowerCase() === nombre.toLowerCase()) {
+        return t.slug;
+      } 
+    }
+
+    console.warn(`⚠️ Término no encontrado: "${nombre}" (ID ${attributeId})`);
+    return null;
+  } catch (error) {
+    console.error(`❌ Error obteniendo slug del término "${nombre}":`, error.message);
+    return null;
+  }
+}
+
 
 function quitarAcentos(str) {
   return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function normalizarNombre(str) {
+  return str
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // quitar acentos
+    .toLowerCase()
+    .trim();
+}
+
+async function obtenerOCrearAtributoGlobal(nombre) {
+  const slug = nombre.toLowerCase().replace(/\s+/g, "-");
+
+  const res = await axios.get(
+    'https://vorx.es/paraiso/wp-json/wc/v3/products/attributes',
+    {
+      auth: { username: consumerKey, password: consumerSecret },
+      params: { per_page: 100 }
+    }
+  );
+
+  console.log(`🔍 Buscando atributo global: ${nombre}`, res.data);
+
+  const encontrado = res.data.find(a => normalizarNombre(a.name) === normalizarNombre(nombre));
+  if (encontrado) {
+    console.log(`📌 Atributo global encontrado: ${encontrado.name}`);
+    return encontrado.id;
+  }
+
+  // No existe, se crea
+  const createRes = await axios.post(
+    'https://vorx.es/paraiso/wp-json/wc/v3/products/attributes',
+    {
+      name: nombre,
+      slug: slug
+    },
+    {
+      auth: { username: consumerKey, password: consumerSecret }
+    }
+  );
+
+  console.log(`✅ Atributo global creado: ${nombre}`);
+  return createRes.data.id;
+}
+
+
+function slugify(str) {
+  return str
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // quita acentos
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^\w-]/g, "");
+}
+
+async function asegurarTerminosAtributo(attributeId, opciones) {
+  const existentes = await axios.get(
+    `https://vorx.es/paraiso/wp-json/wc/v3/products/attributes/${attributeId}/terms`,
+    {
+      auth: { username: consumerKey, password: consumerSecret },
+      params: { per_page: 100 }
+    }
+  );
+
+  const existentesSlugs = existentes.data.map(t => slugify(t.name));
+
+  for (const opcion of opciones) {
+    const slug = slugify(opcion);
+    if (!existentesSlugs.includes(slug)) {
+      try {
+        await axios.post(
+          `https://vorx.es/paraiso/wp-json/wc/v3/products/attributes/${attributeId}/terms`,
+          { name: opcion },
+          {
+            auth: { username: consumerKey, password: consumerSecret }
+          }
+        );
+        console.log(`➕ Opción añadida: ${opcion} al atributo ID ${attributeId}`);
+      } catch (error) {
+        // console.warn(`⚠️ No se pudo crear término "${opcion}":`, error.response?.data?.message || error.message);
+      }
+    }
+  }
 }
 
 async function cargarDatosDesdeSheets(category) {
@@ -69,49 +183,53 @@ async function cargarDatosDesdeSheets(category) {
       continue;
     }
     if (fila["Tipo"].toLowerCase() === "variable") {
-      // Extraemos atributos definidos en la fila padre
       const atributos = fila["Atributos"]
         ? fila["Atributos"].split(",").map(attr => attr.trim())
         : [];
+    
       const ediciones = [
-        "Local",
-        "Visitante",
-        "Portero",
-        "Alternativa",
-        "Tercera",
-        "Especial",
-        "Prepartido",
-        "Local manga larga",
-        "Festival",
-        "Copa",
-        "Coldplay",
-        "Edición Especial",
-        "50 aniversario",
-        "100 aniversario"
+        "Local", "Visitante", "Portero", "Alternativa", "Tercera", "Especial",
+        "Prepartido", "Local manga larga", "Festival", "Copa", "Coldplay",
+        "Edición Especial", "50 aniversario", "100 aniversario"
       ];
-      console.log(fila["Categorías"])
+    
       const liga = fila["Categorías"].split(" – ")[1];
       const edicionRegex = new RegExp(`\\b(${ediciones.join("|")})\\b`, "i");
-
+    
       const match = fila["Nombre"].match(edicionRegex);
-
-      let equipo = "";
-      let edicion = "";
-      
+      let equipo = "", edicion = "";
+    
       if (match) {
         const start = fila["Nombre"].indexOf(match[0]);
-        equipo = quitarAcentos(fila["Nombre"].substring(0, start).trim())
-          .replace(/\s+/g, "-");
-      
+        equipo = quitarAcentos(fila["Nombre"].substring(0, start).trim()).replace(/\s+/g, "-");
         const postMatch = fila["Nombre"].substring(start);
-        edicion = quitarAcentos(
-          postMatch.replace(/\d{2}\/\d{2}/, "").trim()
-        )
-          .replace(/[^\w\s-]/g, "")     // eliminar símbolos
-          .replace(/\s+/g, "-")         // espacios a guiones
+        edicion = quitarAcentos(postMatch.replace(/\d{2}\/\d{2}/, "").trim())
+          .replace(/[^\w\s-]/g, "")
+          .replace(/\s+/g, "-")
           .toLowerCase();
       }
-      // Creamos el producto padre
+    
+      // ✅ Mover aquí la declaración de variaciones
+      const variaciones = [];
+      let j = i + 1;
+      while (j < data.length && data[j]["Tipo"].toLowerCase() === "variation") {
+        variaciones.push(data[j]);
+        j++;
+      }
+    
+      const attributesWithGlobal = {};
+      for (const attr of atributos) {
+        const attributeId = await obtenerOCrearAtributoGlobal(attr);
+        const opciones = variaciones.map(v => v[attr]?.trim()).filter(Boolean);
+        await asegurarTerminosAtributo(attributeId, opciones);
+        attributesWithGlobal[attr] = {
+          id: attributeId,
+          options: [...new Set(opciones)],
+          variation: true,
+          visible: true
+        };
+      }
+    
       const producto = {
         name: fila["Nombre"],
         type: "variable",
@@ -119,53 +237,57 @@ async function cargarDatosDesdeSheets(category) {
         status: fila["Publicado"] === "1" ? 'publish' : 'draft',
         catalog_visibility: fila["Visibilidad en el catálogo"] || "visible",
         description: fila["Descripción"],
-        short_description: fila["Descripción corta"],
+        short_description: fila["Descripción"],
         categories: [{ id: categoryMap[category] }],
         images: await generarImagenesDesdeMedia(liga, equipo, edicion),
-        attributes: atributos.map(attr => ({
-          name: attr,
-          options: [], // se llenará después con todas las opciones encontradas
-          variation: true,
-          visible: true
-        })),
+        attributes: Object.values(attributesWithGlobal),
         manage_stock: true,
         stock_quantity: 10000,
       };
-  
-      // Recolectamos variaciones
-      const variaciones = [];
-  
-      let j = i + 1;
-      while (j < data.length && data[j]["Tipo"].toLowerCase() === "variation") {
-        
-        variaciones.push(data[j]);
-        j++;
-      }
-  
-      // Llenamos las opciones posibles para cada atributo
-      for (const attr of producto.attributes) {
-        const opciones = variaciones.map(v => v[attr.name]?.trim()).filter(Boolean);
-        attr.options = [...new Set(opciones)];
-      }
-  
+    
       const productId = await crearProductoVariable(producto);
-  
-      // Crear cada variación con precio individual
+    
       for (const variante of variaciones) {
         const precio = variante["Precio"] || variante["Precio normal"] || "0";
         const sku = variante["SKU"];
-  
-        const atributosVariacion = atributos.map(attr => ({
-          name: attr,
-          option: variante[attr]?.trim()
-        }));
-  
+      
+        const atributosVariacion = [];
+      
+        for (const attr of atributos) {
+          const valor = variante[attr];
+          if (!valor) continue;
+        
+          const attrGlobal = attributesWithGlobal[attr]; // ✅ CORRECTO
+          // console.log("Atributo global:", attrGlobal);
+          if (!attrGlobal) {
+            console.warn(`⚠️ No se encontró el atributo global para "${attr}"`);
+            continue;
+          }
+        
+          try {
+            const slug = await obtenerSlugTermino(attrGlobal.id, valor);
+            if (!slug) {
+              console.warn(`⚠️ Término no encontrado: "${valor}" para atributo "${attr}"`);
+              continue;
+            }
+        
+            atributosVariacion.push({
+              id: attrGlobal.id,
+              option: valor.trim()
+            });
+          } catch (error) {
+            console.error(`❌ Error procesando atributo "${attr}" con valor "${valor}":`, error.message);
+            continue;
+          }
+        }
+        console.log("Atributos de variación:", atributosVariacion);
+
+      
         await agregarVariacion(productId, atributosVariacion, precio, sku);
       }
-  
-      // Avanzamos el índice hasta el último hijo
-      i = j - 1;      
-    } 
+    
+      i = j - 1;
+    }
   }
   // await guardarDatosEnMySQL(data, servidorNombre);
 }
@@ -206,7 +328,7 @@ async function crearProductoVariable(producto) {
       categories: producto.categories,
       images: producto.images,
       attributes: producto.attributes.map(attr => ({
-        name: attr.name,
+        id: attr.id,
         options: attr.options,
         variation: true,
         visible: true
@@ -231,23 +353,44 @@ async function crearProductoVariable(producto) {
 }
 
 
-async function agregarVariacion(productId, attributes, precio, sku) {
-  const response = await axios.post(
-    `https://vorx.es/paraiso/wp-json/wc/v3/products/${productId}/variations`,
-    {
-      regular_price: precio,
-      sku: sku || undefined,
-      attributes
-    },
-    {
-      auth: {
-        username: consumerKey,
-        password: consumerSecret
-      }
-    }
-  );
-  console.log(`✔️ Variación creada: ${sku} con precio ${precio}`, response.data.id);
+async function agregarVariacion(productId, atributos, precio, sku) {
+  const atributosVariacion = [];
 
+  for (const attr of atributos) {
+
+
+    const attributeId = attr.id;
+
+    atributosVariacion.push({
+      id: attributeId,
+      option: attr.option.trim()
+    });
+  }
+
+
+  const payload = {
+    regular_price: precio,
+    sku: sku || undefined,
+    attributes: atributosVariacion
+  };
+
+  console.log("➡️ Enviando variación:", payload);
+
+  try {
+    const response = await axios.post(
+      `https://vorx.es/paraiso/wp-json/wc/v3/products/${productId}/variations`,
+      payload,
+      {
+        auth: {
+          username: consumerKey,
+          password: consumerSecret
+        }
+      }
+    );
+    console.log(`✔️ Variación creada: ${sku} con precio ${precio}`, response.data.id);
+  } catch (error) {
+    console.error(`❌ Error al crear variación para SKU: ${sku}`, error.response?.data || error.message);
+  }
 }
 
 // for (const category of categories) {
