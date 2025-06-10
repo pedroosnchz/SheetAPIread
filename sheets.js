@@ -238,7 +238,10 @@ async function cargarDatosDesdeSheets(category) {
         catalog_visibility: fila["Visibilidad en el catálogo"] || "visible",
         description: fila["Descripción"],
         short_description: fila["Descripción"],
-        categories: [{ id: categoryMap[category] }],
+        categories: [
+          { id: categoryMap[category] },
+          { id: await obtenerOCrearCategoria(equipo.replace(/-/g, ' ')) }
+        ],
         images: await generarImagenesDesdeMedia(liga, equipo, edicion),
         attributes: Object.values(attributesWithGlobal),
         manage_stock: true,
@@ -404,6 +407,43 @@ async function agregarVariacion(productId, atributos, precio, sku) {
 //     });
 // }
 
+
+async function obtenerOCrearCategoria(nombreCategoria) {
+  const slug = slugify(nombreCategoria);
+
+  try {
+    const res = await axios.get(
+      'https://vorx.es/paraiso/wp-json/wc/v3/products/categories',
+      {
+        auth: { username: consumerKey, password: consumerSecret },
+        params: { per_page: 100, search: nombreCategoria }
+      }
+    );
+
+    const encontrada = res.data.find(cat => normalizarNombre(cat.name) === normalizarNombre(nombreCategoria));
+    if (encontrada) {
+      console.log(`📌 Categoría encontrada: ${nombreCategoria}`);
+      return encontrada.id;
+    }
+
+    // No existe, se crea
+    const createRes = await axios.post(
+      'https://vorx.es/paraiso/wp-json/wc/v3/products/categories',
+      {
+        name: nombreCategoria,
+        slug: slug
+      },
+      {
+        auth: { username: consumerKey, password: consumerSecret }
+      }
+    );
+    console.log(`➕ Categoría creada: ${nombreCategoria}`);
+    return createRes.data.id;
+  } catch (error) {
+    console.error(`❌ Error al obtener/crear categoría "${nombreCategoria}":`, error.message);
+    return null;
+  }
+}
 
 async function getProduct(){
   try {
